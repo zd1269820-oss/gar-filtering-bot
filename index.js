@@ -1,118 +1,73 @@
 require("dotenv").config();
-const fs = require("fs");
-
-const { 
-  Client, 
-  GatewayIntentBits, 
-  EmbedBuilder 
+const {
+  Client,
+  GatewayIntentBits,
+  Collection,
+  EmbedBuilder
 } = require("discord.js");
 
-const noblox = require("noblox.js");
+const fs = require("fs");
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-console.log("Starting GAR Sentinel Bot...");
+client.commands = new Collection();
+
+/* Load Commands */
+const commandFiles = fs
+  .readdirSync("./commands")
+  .filter((file) => file.endsWith(".js"));
+
+for (const file of commandFiles) {
+  const command = require(`./commands/${file}`);
+  client.commands.set(command.data.name, command);
+}
+
+/* Auto Quotes */
+const quotes = require("./quotes.json");
 
 client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log(`✅ Sentinel Bot Online as ${client.user.tag}`);
+
+  setInterval(() => {
+    const guilds = client.guilds.cache;
+
+    guilds.forEach((guild) => {
+      const channel = guild.channels.cache.find(
+        (c) => c.name === "sentinel-quotes"
+      );
+
+      if (!channel) return;
+
+      const quote = quotes[Math.floor(Math.random() * quotes.length)];
+
+      const embed = new EmbedBuilder()
+        .setTitle("🛡 Sentinel Message")
+        .setDescription(quote)
+        .setFooter({ text: "Sentinel Alliance • Honor Above All" });
+
+      channel.send({ embeds: [embed] });
+    });
+  }, 1000 * 60 * 60); // every 1 hour
 });
 
-/* ============================
-   SLASH COMMAND HANDLER
-============================ */
-
+/* Slash Handler */
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  const command = interaction.commandName;
+  const cmd = client.commands.get(interaction.commandName);
+  if (!cmd) return;
 
-  /* ============================
-     /ping
-  ============================ */
-  if (command === "ping") {
-    return interaction.reply("🏓 Pong! Bot is working perfectly.");
-  }
-
-  /* ============================
-     /role
-     Usage: /role user: @user package: rose
-  ============================ */
-  if (command === "role") {
-    const member = interaction.options.getMember("user");
-    const packageKey = interaction.options.getString("package");
-
-    let roleConfig = JSON.parse(fs.readFileSync("./roles.json"));
-
-    if (!roleConfig[packageKey]) {
-      return interaction.reply({
-        content: `❌ Package not found.\nAvailable: ${Object.keys(roleConfig).join(", ")}`,
-        ephemeral: true
-      });
-    }
-
-    let addedRoles = [];
-
-    for (const roleName of roleConfig[packageKey]) {
-      const role = interaction.guild.roles.cache.find(
-        (r) => r.name === roleName
-      );
-
-      if (role) {
-        await member.roles.add(role);
-        addedRoles.push(roleName);
-      }
-    }
-
-    return interaction.reply({
-      content: `✅ Successfully added package **${packageKey}** to ${member.user.tag}\nRoles Added: ${addedRoles.join(", ")}`
+  try {
+    await cmd.execute(interaction);
+  } catch (err) {
+    console.error(err);
+    interaction.reply({
+      content: "❌ Command failed.",
+      ephemeral: true
     });
   }
-
-  /* ============================
-     /check
-     Usage: /check username: RobloxUser
-  ============================ */
-  if (command === "check") {
-    const username = interaction.options.getString("username");
-
-    await interaction.reply("🔍 Checking Roblox account...");
-
-    try {
-      const userId = await noblox.getIdFromUsername(username);
-      const info = await noblox.getPlayerInfo(userId);
-
-      const embed = new EmbedBuilder()
-        .setTitle(`${username}'s Information`)
-        .setDescription(`🆔 Player ID: **${userId}**`)
-        .setThumbnail(
-          `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=420&height=420&format=png`
-        )
-        .addFields(
-          { name: "Display Name", value: info.displayName || "None", inline: true },
-          { name: "Status", value: info.status || "None", inline: true },
-          { name: "Blurb", value: info.blurb || "None" }
-        )
-        .setFooter({ text: "Sentinel Alliance Security System" })
-        .setTimestamp();
-
-      return interaction.editReply({
-        content: "✅ Roblox Check Complete!",
-        embeds: [embed]
-      });
-
-    } catch (err) {
-      return interaction.editReply("❌ Roblox username not found.");
-    }
-  }
 });
-
-/* ============================
-   LOGIN
-============================ */
 
 client.login(process.env.TOKEN);
