@@ -1,0 +1,78 @@
+const { SlashCommandBuilder } = require("discord.js");
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Bot heartbeat"),
+
+  async execute(interaction) {
+    interaction.reply("✅ Sentinel Bot is alive and watching.");
+  }
+};
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName("check")
+    .setDescription("Sentinel account inspection")
+    .addStringOption((opt) =>
+      opt.setName("username").setDescription("Roblox username").setRequired(true)
+    ),
+
+  async execute(interaction) {
+    const user = interaction.options.getString("username");
+
+    const embed = new EmbedBuilder()
+      .setTitle("🛡 Sentinel Alt Intelligence Report")
+      .setDescription(`Target: **${user}**`)
+      .addFields(
+        { name: "Account Age", value: "Loading...", inline: true },
+        { name: "Badges", value: "Loading...", inline: true },
+        { name: "Alt Risk", value: "Pending...", inline: true }
+      )
+      .setFooter({ text: "Sentinel Alliance • Internal Use Only" });
+
+    interaction.reply({ embeds: [embed] });
+  }
+};
+const { SlashCommandBuilder } = require("discord.js");
+const packages = require("../packages.json");
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName("package")
+    .setDescription("Assign a Sentinel role package")
+    .addUserOption((opt) =>
+      opt.setName("user").setDescription("Target user").setRequired(true)
+    )
+    .addStringOption((opt) =>
+      opt.setName("name").setDescription("Package name").setRequired(true)
+    ),
+
+  async execute(interaction) {
+    if (!interaction.member.permissions.has("ManageRoles")) {
+      return interaction.reply({
+        content: "❌ Staff only.",
+        ephemeral: true
+      });
+    }
+
+    const user = interaction.options.getUser("user");
+    const name = interaction.options.getString("name").toLowerCase();
+
+    if (!packages[name]) {
+      return interaction.reply("❌ Package not found.");
+    }
+
+    const member = await interaction.guild.members.fetch(user.id);
+
+    for (const roleName of packages[name]) {
+      const role = interaction.guild.roles.cache.find(
+        (r) => r.name === roleName
+      );
+      if (role) await member.roles.add(role);
+    }
+
+    interaction.reply(`✅ Assigned **${name}** package to ${user.tag}`);
+  }
+};
