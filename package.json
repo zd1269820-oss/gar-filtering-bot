@@ -1,7 +1,12 @@
 {
-  "orderofrose": ["Verified", "Order of Rose", "Company Member"],
-  "orderofiron": ["Verified", "Order of Iron"],
-  "sentinel": ["Verified", "Order of Sentinel"],
-  "scrimmain": ["Scrim Team", "Main Roster"],
-  "scrimreserve": ["Scrim Team", "Reserve"]
+  "name": "sentinel-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.6.1"
+  }
 }
