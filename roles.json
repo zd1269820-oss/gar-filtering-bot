@@ -1,0 +1,27 @@
+{
+  "rose": [
+    "Company – Order of Rose",
+    "Phase 2 Passed",
+    "Verified"
+  ],
+
+  "iron": [
+    "Company – Order of Iron",
+    "Phase 2 Passed",
+    "Verified"
+  ],
+
+  "sentinel": [
+    "Company – Order of Sentinel",
+    "Phase 2 Passed",
+    "Verified"
+  ],
+
+  "scrim-main": [
+    "Scrim Team – Main"
+  ],
+
+  "scrim-reserve": [
+    "Scrim Team – Reserve"
+  ]
+}
