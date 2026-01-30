@@ -1,3 +1,5 @@
+console.log("🔥 MODAL VERSION LOADED — NO DMS 🔥");
+
 require("dotenv").config();
 const {
   Client,
