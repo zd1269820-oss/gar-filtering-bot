@@ -1,321 +1,388 @@
 require("dotenv").config();
-
 const {
-  Client,
-  GatewayIntentBits,
-  EmbedBuilder,
-  PermissionsBitField,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ChannelType,
-  REST,
-  Routes,
-  SlashCommandBuilder
+  Client, GatewayIntentBits, Partials,
+  SlashCommandBuilder, REST, Routes,
+  EmbedBuilder, ChannelType,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
+  ActionRowBuilder
 } = require("discord.js");
+const noblox = require("noblox.js");
+
+/* ================= ROBLOX ================= */
+
+(async () => {
+  await noblox.setCookie(process.env.ROBLOX_COOKIE);
+  console.log("✅ Roblox authenticated");
+})();
+
+/* ================= CLIENT ================= */
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.GuildMembers
+  ],
+  partials: [Partials.Channel]
 });
 
-/* ================= SETTINGS ================= */
+/* ================= CONFIG ================= */
 
-const VERIFIED_ROLE = "Verified";
-const STAFF_ROLE = "Staff";
-const LOG_CHANNEL = "mod-logs";
+const {
+  TOKEN,
+  CLIENT_ID,
+  GUILD_ID,
+  ROBLOX_GROUP_ID,
+  SCREENING_CHANNEL_ID,
+  SUBMISSIONS_CHANNEL_ID,
+  OWNER_ID
+} = process.env;
 
-/* Role Packages (Configurable) */
-const PACKAGES = {
-  "order of rose": ["Order of Rose", "Company"],
-  "order of iron": ["Order of Iron", "Company"],
-  "order of sentinel": ["Order of Sentinel", "Company"],
-  "scrim main": ["Scrim Team", "Main"],
-  "scrim reserve": ["Scrim Team", "Reserve"]
+/* 🔐 ROLE IDS */
+
+const STAFF_ROLE_IDS = [
+  "STAFF_ROLE_ID_1",
+  "STAFF_ROLE_ID_2"
+];
+
+const FILTERING_ROLE_ID = "FILTERING_ROLE_ID";
+
+const STANDARD_COMPANY_ROLES = [
+  "STANDARD_ROLE_1",
+  "STANDARD_ROLE_2"
+];
+
+const COMPANY_PRESETS = {
+  sentinel: {
+    name: "Order of Sentinel",
+    robloxRank: 10,
+    discordRoles: ["ROLE_SENTINEL"]
+  },
+  iron: {
+    name: "Order of Iron",
+    robloxRank: 60,
+    discordRoles: ["ROLE_IRON"]
+  }
 };
 
-/* Quotes */
-const QUOTES = [
-  "🛡️ Honor is the shield of the Sentinel.",
-  "For the Order. For the Sentinel Alliance.",
-  "Strength without discipline is nothing.",
-  "Stand proud, Sentinel. The faction watches.",
-  "A true warrior does not fear the test."
-];
+/* ================= STORAGE ================= */
+
+const linkedAccounts = new Map();
+const tickets = new Map();
+
+/* ================= HELPERS ================= */
+
+const isStaff = m =>
+  m.roles.cache.some(r => STAFF_ROLE_IDS.includes(r.id));
+
+const dark = (title, desc) =>
+  new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(desc)
+    .setColor(0x0b0b0b)
+    .setTimestamp();
 
 /* ================= COMMANDS ================= */
 
 const commands = [
-  new SlashCommandBuilder().setName("ping").setDescription("Test bot"),
+  new SlashCommandBuilder()
+    .setName("linkroblox")
+    .setDescription("Link your Roblox account")
+    .addStringOption(o =>
+      o.setName("username").setRequired(true)),
 
   new SlashCommandBuilder()
-    .setName("verify")
-    .setDescription("Get Verified role"),
+    .setName("passtryout")
+    .setDescription("Pass a user into a company")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o =>
+      o.setName("company").setRequired(true)
+        .addChoices(
+          { name: "Sentinel", value: "sentinel" },
+          { name: "Iron", value: "iron" }
+        )),
 
   new SlashCommandBuilder()
-    .setName("package")
-    .setDescription("Give a role package")
-    .addUserOption(opt =>
-      opt.setName("user").setDescription("Target").setRequired(true)
-    )
-    .addStringOption(opt =>
-      opt
-        .setName("name")
-        .setDescription("Package name (order of rose etc)")
-        .setRequired(true)
-    ),
+    .setName("demote")
+    .setDescription("Demote user to standard company")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   new SlashCommandBuilder()
-    .setName("ticketpanel")
-    .setDescription("Send ticket panel (Staff only)"),
+    .setName("fail")
+    .setDescription("Fail applicant and ban")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   new SlashCommandBuilder()
-    .setName("warn")
-    .setDescription("Warn user (Staff only)")
-    .addUserOption(opt =>
-      opt.setName("user").setDescription("Target").setRequired(true)
-    )
-    .addStringOption(opt =>
-      opt.setName("reason").setDescription("Reason").setRequired(true)
-    ),
+    .setName("appeal")
+    .setDescription("Submit an appeal")
+    .addStringOption(o =>
+      o.setName("roblox").setDescription("Roblox username").setRequired(true))
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Appeal reason").setRequired(true)),
 
   new SlashCommandBuilder()
-    .setName("kick")
-    .setDescription("Kick user")
-    .addUserOption(opt =>
-      opt.setName("user").setDescription("Target").setRequired(true)
-    ),
+    .setName("ticket")
+    .setDescription("Ticket system")
+    .addSubcommand(s => s.setName("open"))
+    .addSubcommand(s => s.setName("close")),
 
   new SlashCommandBuilder()
-    .setName("ban")
-    .setDescription("Ban user")
-    .addUserOption(opt =>
-      opt.setName("user").setDescription("Target").setRequired(true)
-    )
+    .setName("claim")
+    .setDescription("Claim a ticket")
 ];
+
+/* ================= DEPLOY ================= */
+
+(async () => {
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands.map(c => c.toJSON()) }
+  );
+  console.log("✅ Commands deployed");
+})();
 
 /* ================= READY ================= */
 
-client.once("ready", async () => {
-  console.log(`✅ Sentinel Online: ${client.user.tag}`);
+client.once("ready", () => {
+  console.log(`🤖 Logged in as ${client.user.tag}`);
 
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
-  await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.CLIENT_ID,
-      process.env.GUILD_ID
-    ),
-    { body: commands.map(cmd => cmd.toJSON()) }
-  );
-
-  console.log("✅ Commands Registered!");
-
-  /* Auto Quotes */
-  setInterval(() => {
-    const guild = client.guilds.cache.first();
+  /* AUTO-KICK CHECK (EVERY HOUR) */
+  setInterval(async () => {
+    const guild = client.guilds.cache.get(GUILD_ID);
     if (!guild) return;
 
-    const channel = guild.channels.cache.find(c => c.name === "general");
-    if (!channel) return;
+    await guild.members.fetch();
 
-    const quote = QUOTES[Math.floor(Math.random() * QUOTES.length)];
+    guild.members.cache.forEach(async m => {
+      if (!m.roles.cache.has(FILTERING_ROLE_ID)) return;
 
-    channel.send(`📜 **Sentinel Wisdom**\n${quote}`);
-  }, 1000 * 60 * 60); // every hour
-});
+      const days = (Date.now() - m.joinedAt) / 86400000;
+      if (days < 5) return;
 
-/* ================= LOG FUNCTION ================= */
+      try {
+        await m.send(
+          dark(
+            "Removed from Sentinel Alliance",
+`You failed to complete screening within **5 days**.
 
-function log(guild, msg) {
-  const channel = guild.channels.cache.find(c => c.name === LOG_CHANNEL);
-  if (channel) channel.send(msg);
-}
+You have been removed from the server.
 
-/* ================= ALT DETECTION ================= */
+You may submit **one appeal** using:
+/appeal <roblox username> <reason>`
+          )
+        );
+      } catch {}
 
-client.on("guildMemberAdd", member => {
-  const ageDays =
-    (Date.now() - member.user.createdTimestamp) /
-    (1000 * 60 * 60 * 24);
+      await m.kick("Failed to complete screening in 5 days");
 
-  if (ageDays < 7) {
-    log(
-      member.guild,
-      `⚠️ Possible Alt: ${member.user.tag} (${ageDays.toFixed(1)} days old)`
-    );
-  }
+      const log = guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID);
+      log?.send(
+        dark(
+          "Auto-Removed (Screening Timeout)",
+`User: ${m.user.tag}
+Reason: Did not complete filtering in 5 days`
+        )
+      );
+    });
+  }, 60 * 60 * 1000);
 });
 
 /* ================= INTERACTIONS ================= */
 
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+client.on("interactionCreate", async i => {
 
-  const cmd = interaction.commandName;
-  const embed = new EmbedBuilder().setColor(0x00ff99);
+  /* ===== APPEAL COMMAND (PUBLIC) ===== */
+  if (i.isChatInputCommand() && i.commandName === "appeal") {
+    const roblox = i.options.getString("roblox");
+    const reason = i.options.getString("reason");
 
-  /* /ping */
-  if (cmd === "ping") {
-    embed.setTitle("🏓 Pong!").setDescription("Sentinel is online.");
-    return interaction.reply({ embeds: [embed] });
-  }
+    const ch = i.guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID);
+    ch?.send(
+      dark(
+        "New Appeal Submitted",
+`Discord: ${i.user.tag} (${i.user.id})
+Roblox: ${roblox}
 
-  /* /verify */
-  if (cmd === "verify") {
-    const role = interaction.guild.roles.cache.find(
-      r => r.name === VERIFIED_ROLE
-    );
-
-    if (!role)
-      return interaction.reply("❌ Verified role missing.");
-
-    await interaction.member.roles.add(role);
-
-    embed.setTitle("✅ Verified!")
-      .setDescription("Welcome to the Sentinel Alliance.");
-
-    return interaction.reply({ embeds: [embed] });
-  }
-
-  /* /package */
-  if (cmd === "package") {
-    const staffRole = interaction.guild.roles.cache.find(
-      r => r.name === STAFF_ROLE
-    );
-
-    if (!interaction.member.roles.cache.has(staffRole.id))
-      return interaction.reply("❌ Staff only.");
-
-    const user = interaction.options.getMember("user");
-    const name = interaction.options.getString("name").toLowerCase();
-
-    if (!PACKAGES[name])
-      return interaction.reply("❌ Package not found.");
-
-    for (const roleName of PACKAGES[name]) {
-      const role = interaction.guild.roles.cache.find(
-        r => r.name === roleName
-      );
-      if (role) await user.roles.add(role);
-    }
-
-    embed.setTitle("🎖️ Package Applied")
-      .setDescription(`Gave **${name}** roles to ${user.user.tag}`);
-
-    log(interaction.guild, `✅ Package ${name} → ${user.user.tag}`);
-
-    return interaction.reply({ embeds: [embed] });
-  }
-
-  /* /ticketpanel */
-  if (cmd === "ticketpanel") {
-    const staffRole = interaction.guild.roles.cache.find(
-      r => r.name === STAFF_ROLE
-    );
-
-    if (!interaction.member.roles.cache.has(staffRole.id))
-      return interaction.reply("❌ Staff only.");
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("ticket_open")
-        .setLabel("🎫 Open Ticket")
-        .setStyle(ButtonStyle.Primary)
-    );
-
-    embed.setTitle("🎫 Sentinel Support")
-      .setDescription("Press below to open a ticket.");
-
-    return interaction.reply({ embeds: [embed], components: [row] });
-  }
-
-  /* /warn */
-  if (cmd === "warn") {
-    const staffRole = interaction.guild.roles.cache.find(
-      r => r.name === STAFF_ROLE
-    );
-
-    if (!interaction.member.roles.cache.has(staffRole.id))
-      return interaction.reply("❌ Staff only.");
-
-    const user = interaction.options.getUser("user");
-    const reason = interaction.options.getString("reason");
-
-    embed.setTitle("⚠️ Warning Issued")
-      .setDescription(`${user.tag} warned.`)
-      .addFields({ name: "Reason", value: reason });
-
-    log(interaction.guild, `⚠️ Warned ${user.tag}: ${reason}`);
-
-    return interaction.reply({ embeds: [embed] });
-  }
-
-  /* /kick */
-  if (cmd === "kick") {
-    if (
-      !interaction.member.permissions.has(
-        PermissionsBitField.Flags.KickMembers
+Reason:
+${reason}`
       )
-    )
-      return interaction.reply("❌ No permission.");
+    );
 
-    const member = interaction.options.getMember("user");
-    await member.kick();
-
-    return interaction.reply(`👢 Kicked ${member.user.tag}`);
-  }
-
-  /* /ban */
-  if (cmd === "ban") {
-    if (
-      !interaction.member.permissions.has(
-        PermissionsBitField.Flags.BanMembers
-      )
-    )
-      return interaction.reply("❌ No permission.");
-
-    const member = interaction.options.getMember("user");
-    await member.ban();
-
-    return interaction.reply(`🔨 Banned ${member.user.tag}`);
-  }
-});
-
-/* ================= TICKET BUTTON ================= */
-
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isButton()) return;
-
-  if (interaction.customId === "ticket_open") {
-    const channel = await interaction.guild.channels.create({
-      name: `ticket-${interaction.user.username}`,
-      type: ChannelType.GuildText,
-      permissionOverwrites: [
-        {
-          id: interaction.guild.id,
-          deny: [PermissionsBitField.Flags.ViewChannel]
-        },
-        {
-          id: interaction.user.id,
-          allow: [PermissionsBitField.Flags.ViewChannel]
-        }
-      ]
-    });
-
-    channel.send(`🎫 Ticket opened by ${interaction.user}`);
-
-    return interaction.reply({
-      content: `✅ Ticket created: ${channel}`,
+    return i.reply({
+      content: "✅ Appeal submitted. Staff will review it.",
       ephemeral: true
     });
   }
+
+  /* ===== FAIL MODAL SUBMIT ===== */
+  if (i.isModalSubmit() && i.customId === "fail_modal") {
+    const reason = i.fields.getTextInputValue("reason");
+    const userId = i.fields.getTextInputValue("userid");
+    const member = await i.guild.members.fetch(userId).catch(() => null);
+
+    if (member) {
+      await member.send(
+        dark(
+          "Application Failed",
+`Reason:
+${reason}
+
+You have been removed from Sentinel Alliance.
+
+You may submit **one appeal** to the Owner:
+<@${OWNER_ID}>`
+        )
+      ).catch(() => {});
+
+      await member.ban({ reason: "Screening failed" });
+    }
+
+    i.guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID)
+      ?.send(dark("Applicant Failed", `User ID: ${userId}\nReason:\n${reason}`));
+
+    return i.reply({ content: "❌ Applicant failed.", ephemeral: true });
+  }
+
+  if (!i.isChatInputCommand()) return;
+
+  /* LINK ROBLOX */
+  if (i.commandName === "linkroblox") {
+    try {
+      const id = await noblox.getIdFromUsername(
+        i.options.getString("username")
+      );
+      linkedAccounts.set(i.user.id, id);
+      return i.reply("🔗 Roblox linked.");
+    } catch {
+      return i.reply("❌ Roblox user not found.");
+    }
+  }
+
+  /* STAFF ONLY BELOW */
+  if (!isStaff(i.member))
+    return i.reply({ content: "❌ Staff only.", ephemeral: true });
+
+  /* FAIL */
+  if (i.commandName === "fail") {
+    const user = i.options.getUser("user");
+    const modal = new ModalBuilder()
+      .setCustomId("fail_modal")
+      .setTitle("Fail Applicant")
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("reason")
+            .setLabel("Failure Reason")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("userid")
+            .setLabel("User ID (DO NOT EDIT)")
+            .setStyle(TextInputStyle.Short)
+            .setValue(user.id)
+        )
+      );
+    return i.showModal(modal);
+  }
+
+  /* PASS TRYOUT */
+  if (i.commandName === "passtryout") {
+    const user = i.options.getUser("user");
+    const preset = COMPANY_PRESETS[i.options.getString("company")];
+    const robloxId = linkedAccounts.get(user.id);
+    if (!robloxId) return i.reply("❌ User not linked.");
+
+    const member = await i.guild.members.fetch(user.id);
+    for (const r of preset.discordRoles)
+      await member.roles.add(r).catch(() => {});
+    await noblox.setRank(ROBLOX_GROUP_ID, robloxId, preset.robloxRank);
+
+    return i.reply(`✅ ${user.tag} placed into **${preset.name}**`);
+  }
+
+  /* DEMOTE */
+  if (i.commandName === "demote") {
+    const user = i.options.getUser("user");
+    const robloxId = linkedAccounts.get(user.id);
+    const member = await i.guild.members.fetch(user.id);
+
+    for (const p of Object.values(COMPANY_PRESETS))
+      for (const r of p.discordRoles)
+        await member.roles.remove(r).catch(() => {});
+
+    for (const r of STANDARD_COMPANY_ROLES)
+      await member.roles.add(r).catch(() => {});
+
+    if (robloxId)
+      await noblox.setRank(ROBLOX_GROUP_ID, robloxId, 1);
+
+    return i.reply(`⬇️ ${user.tag} demoted.`);
+  }
+
+  /* TICKETS */
+  if (i.commandName === "ticket") {
+    if (i.options.getSubcommand() === "open") {
+      const ch = await i.guild.channels.create({
+        name: `ticket-${i.user.username}`,
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          { id: i.guild.id, deny: ["ViewChannel"] },
+          { id: i.user.id, allow: ["ViewChannel", "SendMessages"] }
+        ]
+      });
+      tickets.set(i.user.id, ch.id);
+      return i.reply({ content: `🎫 ${ch}`, ephemeral: true });
+    }
+
+    if (i.options.getSubcommand() === "close") {
+      const chId = tickets.get(i.user.id);
+      await i.guild.channels.cache.get(chId)?.delete();
+      tickets.delete(i.user.id);
+      return i.reply("✅ Ticket closed.");
+    }
+  }
+
+  if (i.commandName === "claim") {
+    await i.channel.permissionOverwrites.edit(i.user.id, {
+      ViewChannel: true,
+      SendMessages: true
+    });
+    return i.reply(`🎫 Claimed by ${i.user.tag}`);
+  }
 });
 
-/* ================= START ================= */
+/* ================= WELCOME + SCREENING ================= */
 
-client.login(process.env.TOKEN);
+client.on("guildMemberAdd", async m => {
+  try {
+    await m.send(
+      dark(
+        "Welcome to Sentinel Alliance",
+`You have **5 days** to complete filtering.
+
+Failure to do so will result in removal.
+
+Follow all instructions carefully.`
+      )
+    );
+  } catch {}
+
+  m.guild.channels.cache.get(SCREENING_CHANNEL_ID)?.send({
+    content: `<@${m.id}>`,
+    embeds: [
+      dark(
+        "Filtering Process",
+"Begin Phase 1 immediately. Check pinned messages."
+      )
+    ]
+  });
+});
+
+/* ================= SAFETY ================= */
+
+process.on("unhandledRejection", console.error);
+process.on("uncaughtException", console.error);
+
+client.login(TOKEN);
