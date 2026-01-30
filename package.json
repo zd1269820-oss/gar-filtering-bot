@@ -1,6 +1,6 @@
 {
-  "name": "railway-discord-bot",
-  "version": "4.0.0",
+  "name": "sentinel-alliance-bot",
+  "version": "6.0.0",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -12,4 +12,3 @@
     "noblox.js": "^6.2.0"
   }
 }
-
