@@ -11,16 +11,10 @@ const {
 
 /* ================= CONFIG ================= */
 
-const {
-  TOKEN,
-  CLIENT_ID,
-  GUILD_ID,
-  OWNER_ID,
-  SUBMISSIONS_CHANNEL_ID
-} = process.env;
-
-/* SETTINGS */
-const QUIZ_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+const SUBMISSIONS_CHANNEL_ID = process.env.SUBMISSIONS_CHANNEL_ID;
 
 /* ================= CLIENT ================= */
 
@@ -36,11 +30,7 @@ const client = new Client({
 
 /* ================= STORAGE ================= */
 
-// userId -> { step, answers }
 const activeQuizzes = new Map();
-
-// userId -> lastQuizTimestamp
-const quizCooldowns = new Map();
 
 /* ================= HELPERS ================= */
 
@@ -51,12 +41,9 @@ const embed = (title, desc) =>
     .setColor(0x0b0b0b)
     .setTimestamp();
 
-const isOwnerOrStaff = (member) =>
-  member?.id === OWNER_ID || member?.permissions?.has?.("Administrator");
+/* ================= QUIZ ================= */
 
-/* ================= QUIZ QUESTIONS ================= */
-
-const QUIZ = [
+const QUESTIONS = [
   "Send your **Roblox profile link**.",
   "Why do you want to join **Sentinel Alliance**?",
   "Describe your clanning experience.",
@@ -69,28 +56,46 @@ const QUIZ = [
 const commands = [
   new SlashCommandBuilder()
     .setName("startquiz")
-    .setDescription("Begin Sentinel Alliance submission quiz")
-    .addStringOption(o =>
-      o.setName("force")
-        .setDescription("Force start (staff/owner only)")
-        .addChoices({ name: "force", value: "force" })
-        .setRequired(false)
-    ),
+    .setDescription("Begin Sentinel Alliance quiz"),
 
   new SlashCommandBuilder()
     .setName("retrydm")
-    .setDescription("Retry the quiz DM if it failed")
+    .setDescription("Retry DM if it failed"),
+
+  new SlashCommandBuilder()
+    .setName("accept")
+    .setDescription("Accept applicant")
+    .addUserOption(o =>
+      o.setName("user").setDescription("User").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("deny")
+    .setDescription("Deny applicant")
+    .addUserOption(o =>
+      o.setName("user").setDescription("User").setRequired(true)
+    )
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(true)
+    )
 ];
 
-/* ================= DEPLOY ================= */
+/* ================= DEPLOY (CLEARS OLD COMMANDS) ================= */
 
 (async () => {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
+
+  // wipe guild + global commands
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: [] });
+  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+
+  // register fresh
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: commands.map(c => c.toJSON()) }
   );
-  console.log("✅ Commands deployed");
+
+  console.log("✅ Commands wiped and re-registered clean");
 })();
 
 /* ================= READY ================= */
@@ -99,119 +104,74 @@ client.once("ready", () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-/* ================= DM STARTER ================= */
-
-async function startQuizDM(user, guild, forced = false) {
-  // Always clear any stale state before attempting
-  activeQuizzes.delete(user.id);
-
-  try {
-    activeQuizzes.set(user.id, { step: 0, answers: [] });
-
-    await user.send(
-      embed(
-        "Sentinel Alliance Screening",
-`Hello **${user.username}**,
-
-This quiz is conducted **entirely in DMs**.
-• One attempt every **48 hours**
-• Abuse or bypass attempts = **ban**
-
-**Question 1:**  
-${QUIZ[0]}`
-      )
-    );
-
-    return true;
-  } catch (err) {
-    // DM failed — clean up state and log
-    activeQuizzes.delete(user.id);
-
-    const log = guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID);
-    log?.send(
-      embed(
-        "DM FAILED",
-        `Could not DM **${user.tag}** (${user.id}).\nLikely DMs disabled or bot blocked.`
-      )
-    );
-
-    return false;
-  }
-}
-
 /* ================= INTERACTIONS ================= */
 
-client.on("interactionCreate", async (i) => {
+client.on("interactionCreate", async i => {
   if (!i.isChatInputCommand()) return;
 
   /* START QUIZ */
-  if (i.commandName === "startquiz") {
-    const forceFlag = i.options.getString("force") === "force";
-    const now = Date.now();
-    const last = quizCooldowns.get(i.user.id);
+  if (i.commandName === "startquiz" || i.commandName === "retrydm") {
+    activeQuizzes.delete(i.user.id);
 
-    if (!forceFlag && last && now - last < QUIZ_COOLDOWN_MS) {
+    try {
+      activeQuizzes.set(i.user.id, { step: 0, answers: [] });
+
+      await i.user.send(
+        embed(
+          "Sentinel Alliance Screening",
+`Hello **${i.user.username}**,
+
+This quiz is conducted in DMs.
+Abuse or spam results in a ban.
+
+**Question 1:**  
+${QUESTIONS[0]}`
+        )
+      );
+
       return i.reply({
-        content: "❌ You’ve already taken the quiz in the last **48 hours**.",
+        content: "📩 Check your DMs to continue.",
         ephemeral: true
       });
-    }
 
-    if (forceFlag && !isOwnerOrStaff(i.member)) {
-      return i.reply({ content: "❌ Staff/Owner only.", ephemeral: true });
-    }
-
-    quizCooldowns.set(i.user.id, now);
-
-    const ok = await startQuizDM(i.user, i.guild, forceFlag);
-
-    if (!ok) {
+    } catch {
+      activeQuizzes.delete(i.user.id);
       return i.reply({
         content:
-          "❌ I couldn’t DM you.\n\nEnable **Allow Direct Messages from server members**, then run **/retrydm**.",
+          "❌ I cannot DM you.\nEnable **Allow DMs from server members**, restart Discord, then try again.",
         ephemeral: true
       });
     }
-
-    return i.reply({
-      content: "📩 I’ve sent you a DM. Please check it to continue.",
-      ephemeral: true
-    });
   }
 
-  /* RETRY DM */
-  if (i.commandName === "retrydm") {
-    const ok = await startQuizDM(i.user, i.guild, true);
+  /* ACCEPT */
+  if (i.commandName === "accept") {
+    const user = i.options.getUser("user");
+    await user.send(embed("Accepted", "You have been accepted into Sentinel Alliance."));
+    return i.reply(`✅ ${user.tag} accepted.`);
+  }
 
-    if (!ok) {
-      return i.reply({
-        content:
-          "❌ Still can’t DM you.\n\nCheck:\n• Server → Privacy → Allow DMs\n• You haven’t blocked the bot\n• Restart Discord\n\nThen try again.",
-        ephemeral: true
-      });
-    }
-
-    return i.reply({
-      content: "📩 DM sent. Please check your messages.",
-      ephemeral: true
-    });
+  /* DENY */
+  if (i.commandName === "deny") {
+    const user = i.options.getUser("user");
+    const reason = i.options.getString("reason");
+    await user.send(embed("Denied", `Reason:\n${reason}`));
+    return i.reply(`❌ ${user.tag} denied.`);
   }
 });
 
-/* ================= DM QUIZ HANDLER ================= */
+/* ================= DM HANDLER ================= */
 
-client.on("messageCreate", async (msg) => {
+client.on("messageCreate", async msg => {
   if (msg.guild) return;
 
   const quiz = activeQuizzes.get(msg.author.id);
   if (!quiz) return;
 
-  // Record answer
   quiz.answers.push(msg.content);
   quiz.step++;
 
-  // Finished
-  if (quiz.step >= QUIZ.length) {
+  if (quiz.step >= QUESTIONS.length) {
     activeQuizzes.delete(msg.author.id);
 
     const ch = client.channels.cache.get(SUBMISSIONS_CHANNEL_ID);
@@ -219,22 +179,18 @@ client.on("messageCreate", async (msg) => {
       embed(
         "New Submission",
         `User: ${msg.author.tag}\n\n` +
-          quiz.answers.map((a, i) => `**Q${i + 1}:**\n${a}`).join("\n\n")
+        quiz.answers.map((a, i) => `**Q${i + 1}:**\n${a}`).join("\n\n")
       )
     );
-    ch?.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNEXT APPLICANT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    ch?.send("━━━━━━━━━━━━━━━━━━━━━━\nNEXT APPLICANT\n━━━━━━━━━━━━━━━━━━━━━━");
 
     return msg.author.send(
-      embed(
-        "Submission Complete",
-        "Your submission has been received. Staff will review it."
-      )
+      embed("Complete", "Your submission has been sent.")
     );
   }
 
-  // Next question
-  return msg.author.send(
-    embed(`Question ${quiz.step + 1}`, QUIZ[quiz.step])
+  msg.author.send(
+    embed(`Question ${quiz.step + 1}`, QUESTIONS[quiz.step])
   );
 });
 
