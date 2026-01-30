@@ -1,27 +1,37 @@
-console.log("BOOT CHECK — THIS IS THE SENTINEL ALLIANCE BOT");
-console.log("CLIENT_ID:", process.env.CLIENT_ID);
-console.log("GUILD_ID:", process.env.GUILD_ID);
-
 require("dotenv").config();
 const {
-  Client, GatewayIntentBits, Partials,
-  SlashCommandBuilder, REST, Routes,
-  EmbedBuilder, ChannelType,
-  ModalBuilder, TextInputBuilder, TextInputStyle,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  PermissionFlagsBits
+  Client,
+  GatewayIntentBits,
+  Partials,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  EmbedBuilder,
+  ChannelType,
+  PermissionFlagsBits,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
 } = require("discord.js");
 const noblox = require("noblox.js");
 
-/* ================= ROBLOX ================= */
+/* ================= BOOT CHECK ================= */
+console.log("BOOT CHECK — SENTINEL ALLIANCE BOT");
+console.log("CLIENT_ID:", process.env.CLIENT_ID);
+console.log("GUILD_ID:", process.env.GUILD_ID);
 
+/* ================= ROBLOX ================= */
 (async () => {
-  await noblox.setCookie(process.env.ROBLOX_COOKIE);
-  console.log("✅ Roblox authenticated");
+  try {
+    await noblox.setCookie(process.env.ROBLOX_COOKIE);
+    console.log("✅ Roblox authenticated");
+  } catch (e) {
+    console.error("❌ Roblox auth failed", e);
+  }
 })();
 
 /* ================= CLIENT ================= */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -32,7 +42,6 @@ const client = new Client({
 });
 
 /* ================= CONFIG ================= */
-
 const {
   TOKEN,
   CLIENT_ID,
@@ -43,8 +52,7 @@ const {
   OWNER_ID
 } = process.env;
 
-/* ================= ROLE CONFIG ================= */
-
+/* ================= ROLES ================= */
 const STAFF_ROLE_IDS = [
   "STAFF_ROLE_ID_1",
   "STAFF_ROLE_ID_2"
@@ -52,9 +60,7 @@ const STAFF_ROLE_IDS = [
 
 const FILTERING_ROLE_ID = "FILTERING_ROLE_ID";
 
-const AUTO_ROLE_IDS = [
-  FILTERING_ROLE_ID
-];
+const AUTO_ROLE_IDS = [FILTERING_ROLE_ID];
 
 const STANDARD_COMPANY_ROLES = [
   "STANDARD_ROLE_1",
@@ -85,103 +91,119 @@ const COMPANY_PRESETS = {
 };
 
 /* ================= STORAGE ================= */
-
 const linkedAccounts = new Map();
 const tickets = new Map();
-const joinTracker = [];
 
 /* ================= HELPERS ================= */
+const isStaff = member =>
+  member.roles.cache.some(r => STAFF_ROLE_IDS.includes(r.id));
 
-const isStaff = m =>
-  m.roles.cache.some(r => STAFF_ROLE_IDS.includes(r.id));
-
-const dark = (title, desc) =>
+const darkEmbed = (title, description) =>
   new EmbedBuilder()
     .setTitle(title)
-    .setDescription(desc)
+    .setDescription(description)
     .setColor(0x0b0b0b)
     .setTimestamp();
 
-/* ================= COMMANDS ================= */
-
+/* ================= SLASH COMMANDS ================= */
 const commands = [
-  new SlashCommandBuilder().setName("ping").setDescription("Latency"),
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Test if the bot is responding"),
 
-  new SlashCommandBuilder().setName("linkroblox")
-    .setDescription("Link Roblox account")
+  new SlashCommandBuilder()
+    .setName("linkroblox")
+    .setDescription("Link your Roblox account")
     .addStringOption(o =>
-      o.setName("username").setRequired(true)),
+      o.setName("username")
+        .setDescription("Your Roblox username")
+        .setRequired(true)
+    ),
 
-  new SlashCommandBuilder().setName("passtryout")
-    .setDescription("Pass tryout")
-    .addUserOption(o => o.setName("user").setRequired(true))
+  new SlashCommandBuilder()
+    .setName("passtryout")
+    .setDescription("Pass a user into a company")
+    .addUserOption(o =>
+      o.setName("user")
+        .setDescription("User to pass")
+        .setRequired(true)
+    )
     .addStringOption(o =>
-      o.setName("company").setRequired(true)
+      o.setName("company")
+        .setDescription("Company to assign")
+        .setRequired(true)
         .addChoices(
           { name: "Sentinel", value: "sentinel" },
           { name: "Iron", value: "iron" },
           { name: "Rose", value: "rose" },
           { name: "Raven", value: "raven" }
-        )),
+        )
+    ),
 
-  new SlashCommandBuilder().setName("demote")
-    .setDescription("Demote user")
-    .addUserOption(o => o.setName("user").setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("demote")
+    .setDescription("Demote a user to standard company")
+    .addUserOption(o =>
+      o.setName("user")
+        .setDescription("User to demote")
+        .setRequired(true)
+    ),
 
-  new SlashCommandBuilder().setName("fail")
-    .setDescription("Fail applicant")
-    .addUserOption(o => o.setName("user").setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("fail")
+    .setDescription("Fail an applicant and ban them")
+    .addUserOption(o =>
+      o.setName("user")
+        .setDescription("Applicant to fail")
+        .setRequired(true)
+    ),
 
-  new SlashCommandBuilder().setName("appeal")
-    .setDescription("Submit appeal")
+  new SlashCommandBuilder()
+    .setName("appeal")
+    .setDescription("Submit an appeal to the owner")
     .addStringOption(o =>
-      o.setName("roblox").setRequired(true))
+      o.setName("roblox")
+        .setDescription("Your Roblox username")
+        .setRequired(true)
+    )
     .addStringOption(o =>
-      o.setName("reason").setRequired(true)),
+      o.setName("reason")
+        .setDescription("Reason for appeal")
+        .setRequired(true)
+    ),
 
-  new SlashCommandBuilder().setName("ticket")
-    .setDescription("Tickets")
-    .addSubcommand(s => s.setName("open"))
-    .addSubcommand(s => s.setName("close")),
+  new SlashCommandBuilder()
+    .setName("ticket")
+    .setDescription("Ticket system")
+    .addSubcommand(s =>
+      s.setName("open")
+        .setDescription("Open a ticket")
+    )
+    .addSubcommand(s =>
+      s.setName("close")
+        .setDescription("Close your ticket")
+    ),
 
-  new SlashCommandBuilder().setName("claim")
-    .setDescription("Claim ticket"),
-
-  new SlashCommandBuilder().setName("kick")
-    .setDescription("Kick")
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
-    .addUserOption(o => o.setName("user").setRequired(true)),
-
-  new SlashCommandBuilder().setName("ban")
-    .setDescription("Ban")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
-    .addUserOption(o => o.setName("user").setRequired(true)),
-
-  new SlashCommandBuilder().setName("timeout")
-    .setDescription("Timeout")
-    .addUserOption(o => o.setName("user").setRequired(true))
-    .addIntegerOption(o =>
-      o.setName("minutes").setRequired(true)),
-
-  new SlashCommandBuilder().setName("purge")
-    .setDescription("Delete messages")
-    .addIntegerOption(o =>
-      o.setName("amount").setRequired(true))
+  new SlashCommandBuilder()
+    .setName("claim")
+    .setDescription("Claim a ticket")
 ];
 
-/* ================= DEPLOY ================= */
-
+/* ================= DEPLOY COMMANDS ================= */
 (async () => {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands.map(c => c.toJSON()) }
-  );
-  console.log("✅ Commands deployed");
+  try {
+    const rest = new REST({ version: "10" }).setToken(TOKEN);
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands.map(c => c.toJSON()) }
+    );
+    console.log("✅ Commands deployed");
+  } catch (e) {
+    console.error("❌ Command deploy failed", e);
+  }
 })();
 
 /* ================= READY ================= */
-
 client.once("ready", () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
@@ -191,53 +213,50 @@ client.once("ready", () => {
     if (!guild) return;
 
     await guild.members.fetch();
+    guild.members.cache.forEach(async member => {
+      if (!member.roles.cache.has(FILTERING_ROLE_ID)) return;
 
-    guild.members.cache.forEach(async m => {
-      if (!m.roles.cache.has(FILTERING_ROLE_ID)) return;
-
-      const days = (Date.now() - m.joinedAt) / 86400000;
+      const days = (Date.now() - member.joinedAt) / 86400000;
       if (days < 5) return;
 
       try {
-        await m.send(
-          dark("Removed from Sentinel Alliance",
-`You failed to complete filtering within **5 days**.
-
-You may submit **one appeal** using:
-/appeal <roblox username> <reason>
-
-Appeals go to the **Owner only**.`)
+        await member.send(
+          darkEmbed(
+            "Removed from Sentinel Alliance",
+            "You did not complete screening within 5 days.\n\nYou may submit **one appeal** using `/appeal`."
+          )
         );
       } catch {}
 
-      await m.kick("Filtering timeout");
+      await member.kick("Filtering timeout");
 
       guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID)
-        ?.send(dark("Auto-Kick (Filtering Timeout)",
-`User: ${m.user.tag}
-Reason: Did not complete screening`));
+        ?.send(
+          darkEmbed(
+            "Auto-Kick (Filtering Timeout)",
+            `User: ${member.user.tag}`
+          )
+        );
     });
   }, 60 * 60 * 1000);
 });
 
 /* ================= INTERACTIONS ================= */
-
 client.on("interactionCreate", async i => {
 
-  /* APPEAL */
+  /* APPEAL (PUBLIC) */
   if (i.isChatInputCommand() && i.commandName === "appeal") {
     i.guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID)
-      ?.send(dark("New Appeal",
-`Discord: ${i.user.tag}
-Roblox: ${i.options.getString("roblox")}
-
-Reason:
-${i.options.getString("reason")}`));
-
+      ?.send(
+        darkEmbed(
+          "New Appeal",
+          `Discord: ${i.user.tag}\nRoblox: ${i.options.getString("roblox")}\n\n${i.options.getString("reason")}`
+        )
+      );
     return i.reply({ content: "✅ Appeal submitted.", ephemeral: true });
   }
 
-  /* FAIL MODAL */
+  /* FAIL MODAL SUBMIT */
   if (i.isModalSubmit() && i.customId === "fail_modal") {
     const reason = i.fields.getTextInputValue("reason");
     const userId = i.fields.getTextInputValue("userid");
@@ -245,29 +264,25 @@ ${i.options.getString("reason")}`));
 
     if (member) {
       await member.send(
-        dark("Application Failed",
-`Reason:
-${reason}
-
-You may appeal to the **Owner only**:
-<@${OWNER_ID}>`)
+        darkEmbed(
+          "Application Failed",
+          `${reason}\n\nAppeals are **owner-only**: <@${OWNER_ID}>`
+        )
       ).catch(() => {});
-
       await member.ban({ reason: "Screening failed" });
     }
 
     i.guild.channels.cache.get(SUBMISSIONS_CHANNEL_ID)
-      ?.send(dark("Applicant Failed",
-`User ID: ${userId}
-Reason:
-${reason}`));
+      ?.send(
+        darkEmbed("Applicant Failed", `User ID: ${userId}\n\n${reason}`)
+      );
 
     return i.reply({ content: "❌ Applicant failed.", ephemeral: true });
   }
 
   if (!i.isChatInputCommand()) return;
 
-  /* PUBLIC */
+  /* BASIC */
   if (i.commandName === "ping")
     return i.reply(`🏓 ${client.ws.ping}ms`);
 
@@ -283,14 +298,13 @@ ${reason}`));
     }
   }
 
-  /* STAFF ONLY BELOW */
+  /* STAFF ONLY */
   if (!isStaff(i.member))
     return i.reply({ content: "❌ Staff only.", ephemeral: true });
 
   /* FAIL */
   if (i.commandName === "fail") {
     const user = i.options.getUser("user");
-
     const modal = new ModalBuilder()
       .setCustomId("fail_modal")
       .setTitle("Fail Applicant")
@@ -310,7 +324,6 @@ ${reason}`));
             .setValue(user.id)
         )
       );
-
     return i.showModal(modal);
   }
 
@@ -353,24 +366,6 @@ ${reason}`));
     return i.reply(`⬇️ ${user.tag} demoted.`);
   }
 
-  /* MOD */
-  if (i.commandName === "kick")
-    return i.guild.members.kick(i.options.getUser("user"));
-
-  if (i.commandName === "ban")
-    return i.guild.members.ban(i.options.getUser("user"));
-
-  if (i.commandName === "timeout") {
-    const m = await i.guild.members.fetch(i.options.getUser("user").id);
-    await m.timeout(i.options.getInteger("minutes") * 60000);
-    return i.reply("⏳ Timed out.");
-  }
-
-  if (i.commandName === "purge") {
-    await i.channel.bulkDelete(i.options.getInteger("amount"), true);
-    return i.reply({ content: "🧹 Cleared.", ephemeral: true });
-  }
-
   /* TICKETS */
   if (i.commandName === "ticket") {
     if (i.options.getSubcommand() === "open") {
@@ -403,30 +398,25 @@ ${reason}`));
   }
 });
 
-/* ================= WELCOME ================= */
-
-client.on("guildMemberAdd", async m => {
+/* ================= JOIN HANDLER ================= */
+client.on("guildMemberAdd", async member => {
   for (const r of AUTO_ROLE_IDS)
-    await m.roles.add(r).catch(() => {});
+    await member.roles.add(r).catch(() => {});
 
   try {
-    await m.send(
-      dark("Welcome to Sentinel Alliance",
-`You are now in **filtering**.
-
-You have **5 days** to complete screening.
-Failure results in removal.
-
-Discipline over numbers.`)
+    await member.send(
+      darkEmbed(
+        "Welcome to Sentinel Alliance",
+        "You are now in filtering.\nYou have **5 days** to complete screening."
+      )
     );
   } catch {}
 
-  m.guild.channels.cache.get(SCREENING_CHANNEL_ID)
-    ?.send({ content: `<@${m.id}>`, embeds: [dark("Begin Screening", "Check pinned messages.")] });
+  member.guild.channels.cache.get(SCREENING_CHANNEL_ID)
+    ?.send({ content: `<@${member.id}>` });
 });
 
 /* ================= SAFETY ================= */
-
 process.on("unhandledRejection", console.error);
 process.on("uncaughtException", console.error);
 
