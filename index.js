@@ -1,3 +1,7 @@
+console.log("BOOT CHECK — THIS IS THE SENTINEL ALLIANCE BOT");
+console.log("CLIENT_ID:", process.env.CLIENT_ID);
+console.log("GUILD_ID:", process.env.GUILD_ID);
+
 require("dotenv").config();
 const {
   Client, GatewayIntentBits, Partials,
