@@ -21,11 +21,13 @@ const {
   SUBMISSIONS_CHANNEL_ID
 } = process.env;
 
-/* ROLES — CHANGE THESE */
+/* ROLES — EDIT THESE */
 const FILTERING_ROLE_ID = "FILTERING_ROLE_ID";
 const VERIFIED_ROLE_ID = "VERIFIED_ROLE_ID";
-const POST_VERIFY_ROLES = ["ROLE_AFTER_VERIFY_1"];
 const STAFF_ROLE_IDS = ["STAFF_ROLE_ID_1"];
+
+/* QUIZ SETTINGS */
+const QUIZ_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 2 days
 
 /* ================= CLIENT ================= */
 
@@ -48,21 +50,20 @@ const client = new Client({
 
 /* ================= STORAGE ================= */
 
-const linkedAccounts = new Map();   // discordId -> robloxId
-const lockedRoblox = new Set();     // robloxId (one-time)
-const activeQuizzes = new Map();    // discordId -> { step, answers }
+const activeQuizzes = new Map();   // discordId -> { step, answers }
+const quizCooldowns = new Map();   // discordId -> timestamp
 
 /* ================= HELPERS ================= */
 
-const isStaff = member =>
-  member.id === OWNER_ID ||
-  member.roles.cache.some(r => STAFF_ROLE_IDS.includes(r.id));
-
-const embed = (t, d) =>
-  new EmbedBuilder().setTitle(t).setDescription(d).setColor(0x0b0b0b);
+const embed = (title, desc) =>
+  new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(desc)
+    .setColor(0x0b0b0b)
+    .setTimestamp();
 
 /* ================= QUIZ QUESTIONS ================= */
-/* 👉 EDIT THESE TO ADD / REMOVE QUESTIONS */
+/* 👉 EDIT THIS ARRAY TO ADD / REMOVE QUESTIONS */
 
 const QUIZ = [
   { key: "profile", question: "Send your **Roblox profile link**." },
@@ -76,20 +77,7 @@ const QUIZ = [
 const commands = [
   new SlashCommandBuilder()
     .setName("startquiz")
-    .setDescription("Begin Sentinel Alliance submission quiz"),
-
-  new SlashCommandBuilder()
-    .setName("linkroblox")
-    .setDescription("Link your Roblox account")
-    .addStringOption(o =>
-      o.setName("username")
-        .setDescription("Your Roblox username")
-        .setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("verify")
-    .setDescription("Begin Roblox verification")
+    .setDescription("Begin Sentinel Alliance submission quiz")
 ];
 
 /* ================= DEPLOY ================= */
@@ -114,54 +102,51 @@ client.once("ready", () =>
 client.on("interactionCreate", async i => {
   if (!i.isChatInputCommand()) return;
 
-  /* START QUIZ */
   if (i.commandName === "startquiz") {
-    activeQuizzes.set(i.user.id, { step: 0, answers: {} });
+    const now = Date.now();
+    const last = quizCooldowns.get(i.user.id);
 
-    await i.reply({ content: "📩 Check your DMs to begin.", ephemeral: true });
+    /* COOLDOWN CHECK */
+    if (last && now - last < QUIZ_COOLDOWN_MS) {
+      return i.reply({
+        content: "❌ You have already submitted a quiz in the last **48 hours**.",
+        ephemeral: true
+      });
+    }
 
+    /* ACTIVE QUIZ CHECK */
+    if (activeQuizzes.has(i.user.id)) {
+      return i.reply({
+        content: "❌ You already have an active quiz in progress.",
+        ephemeral: true
+      });
+    }
+
+    quizCooldowns.set(i.user.id, now);
+    activeQuizzes.set(i.user.id, { step: -1, answers: {} });
+
+    await i.reply({
+      content: "📩 Check your DMs to begin the quiz.",
+      ephemeral: true
+    });
+
+    /* INTRO DM */
     return i.user.send(
       embed(
-        "Sentinel Alliance Submission",
-        QUIZ[0].question
+        "Sentinel Alliance Screening",
+`Hello **${i.user.username}**,
+
+Welcome to the Sentinel Alliance submission process.
+
+This is a **one-time quiz per 48 hours**.
+Attempting to bypass, spam, or abuse this system will result in a **permanent ban**.
+
+Be honest and detailed — your answers determine placement.
+
+When you are ready, **reply with:**
+\`ready\``
       )
     );
-  }
-
-  /* LINK ROBLOX */
-  if (i.commandName === "linkroblox") {
-    const username = i.options.getString("username");
-    const robloxId = await noblox.getIdFromUsername(username);
-
-    if (lockedRoblox.has(robloxId))
-      return i.reply({ content: "❌ This Roblox account is already locked.", ephemeral: true });
-
-    linkedAccounts.set(i.user.id, robloxId);
-    lockedRoblox.add(robloxId);
-
-    return i.reply({
-      embeds: [embed("Roblox Linked", "Now run **/verify**")],
-      ephemeral: true
-    });
-  }
-
-  /* VERIFY */
-  if (i.commandName === "verify") {
-    const robloxId = linkedAccounts.get(i.user.id);
-    if (!robloxId)
-      return i.reply({ content: "❌ Link Roblox first.", ephemeral: true });
-
-    const phrase = `Sentinel-${Math.floor(Math.random() * 100000)}`;
-
-    return i.reply({
-      embeds: [
-        embed(
-          "Verification Step",
-          `Put this **exact text** in your Roblox bio:\n\n\`${phrase}\`\`\nThen notify staff.`
-        )
-      ],
-      ephemeral: true
-    });
   }
 });
 
@@ -169,13 +154,36 @@ client.on("interactionCreate", async i => {
 
 client.on("messageCreate", async msg => {
   if (msg.guild) return;
+
   const quiz = activeQuizzes.get(msg.author.id);
   if (!quiz) return;
 
+  /* WAIT FOR READY */
+  if (quiz.step === -1) {
+    if (msg.content.toLowerCase() !== "ready") {
+      return msg.author.send(
+        embed(
+          "Waiting for Confirmation",
+          "Type **ready** when you are prepared to begin."
+        )
+      );
+    }
+
+    quiz.step = 0;
+    return msg.author.send(
+      embed(
+        "Question 1",
+        QUIZ[0].question
+      )
+    );
+  }
+
+  /* RECORD ANSWER */
   const q = QUIZ[quiz.step];
   quiz.answers[q.key] = msg.content;
   quiz.step++;
 
+  /* QUIZ COMPLETE */
   if (quiz.step >= QUIZ.length) {
     activeQuizzes.delete(msg.author.id);
 
@@ -191,12 +199,18 @@ client.on("messageCreate", async msg => {
     return msg.author.send(
       embed(
         "Submission Complete",
-        "Your submission has been sent. Staff will review it."
+        "Your responses have been submitted.\nStaff will review your application."
       )
     );
   }
 
-  msg.author.send(embed("Next Question", QUIZ[quiz.step].question));
+  /* NEXT QUESTION */
+  msg.author.send(
+    embed(
+      `Question ${quiz.step + 1}`,
+      QUIZ[quiz.step].question
+    )
+  );
 });
 
 /* ================= JOIN / LEAVE ================= */
@@ -207,7 +221,7 @@ client.on("guildMemberAdd", async member => {
     await member.send(
       embed(
         "Welcome to Sentinel Alliance",
-        "You are now in filtering.\nRun **/startquiz** to begin."
+        "You are now in **filtering**.\nRun **/startquiz** to begin your submission."
       )
     );
   } catch {}
@@ -218,7 +232,7 @@ client.on("guildMemberRemove", async member => {
     await member.send(
       embed(
         "You Have Been Banned",
-        "Sentinel Alliance enforces a **one-time join policy**.\n\nYou have been permanently banned.\nAppeals must be made to staff."
+        "Sentinel Alliance enforces a **one-time join policy**.\n\nYou have been permanently banned.\nAppeals may be submitted through staff."
       )
     );
   } catch {}
