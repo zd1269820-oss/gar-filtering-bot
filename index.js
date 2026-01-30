@@ -1,3 +1,15 @@
+client.on("ready", async () => {
+  const rest = new (require("discord.js").REST)({ version: "10" }).setToken(process.env.TOKEN);
+  await rest.put(
+    require("discord.js").Routes.applicationGuildCommands(
+      process.env.CLIENT_ID,
+      process.env.GUILD_ID
+    ),
+    { body: commands.map(c => c.toJSON()) }
+  );
+  console.log("🔁 Forced guild command refresh");
+});
+
 console.log("🔥 SENTINEL ALLIANCE FINAL SYSTEM LOADED 🔥");
 
 require("dotenv").config();
