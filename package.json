@@ -1,7 +1,6 @@
 {
   "name": "railway-discord-bot",
-  "version": "1.0.0",
-  "description": "All-in-one Discord bot (2-file setup)",
+  "version": "2.0.0",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
