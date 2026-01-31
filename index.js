@@ -1,4 +1,4 @@
-console.log("🔥 SENTINEL ALLIANCE BOT — CLEAN BUILD LOADED 🔥");
+console.log("🔥 SENTINEL ALLIANCE — FULL SYSTEM LOADED 🔥");
 
 require("dotenv").config();
 const {
@@ -13,12 +13,12 @@ const {
   TextInputStyle,
   ActionRowBuilder
 } = require("discord.js");
+const noblox = require("noblox.js");
 
-/* ================= CONFIG (EDIT LATER) ================= */
+/* ================= CONFIG (EDIT LATER ONLY) ================= */
 
 const CONFIG = {
   GENERAL: {
-    SERVER_NAME: "Sentinel Alliance",
     ONE_TIME_JOIN: true,
     APPLY_COOLDOWN_HOURS: 48,
     TICKET_COOLDOWN_HOURS: 24
@@ -33,8 +33,9 @@ const CONFIG = {
 
   ROLES: {
     STAFF: ["STAFF_ROLE_ID"],
-    MEMBER: "MEMBER_ROLE_ID",
+    VERIFIED: "VERIFIED_ROLE_ID",
     FILTERING: "FILTERING_ROLE_ID",
+    MEMBER: "MEMBER_ROLE_ID",
     DEFAULT_COMPANY: "DEFAULT_COMPANY_ROLE_ID",
 
     ORDERS: {
@@ -45,19 +46,26 @@ const CONFIG = {
     }
   },
 
-  MESSAGES: {
-    APPLY_SUCCESS: "✅ Application submitted. Staff will review it.",
-    TICKET_CREATED: "🎫 Ticket created.",
-    APPEAL_SUCCESS: "✅ Appeal submitted.",
-    ACCEPTED: "✅ You have been accepted.",
-    DENIED: "❌ You have been denied.",
-    FAILED: "🚫 You failed filtering. You may appeal."
+  ROBLOX: {
+    GROUP_ID: 35201289,
+    BIO_PREFIX: "Sentinel-",
+    ONE_ACCOUNT_ONLY: true
   },
 
   SECURITY: {
     SPAM_MSG_5S: 6,
     SPAM_MENTIONS: 5,
     TIMEOUT_SECONDS: 15
+  },
+
+  MESSAGES: {
+    APPLY_SUCCESS: "✅ Application submitted. Staff will review it.",
+    TICKET_CREATED: "🎫 Ticket created.",
+    APPEAL_SUCCESS: "✅ Appeal submitted.",
+    VERIFIED: "✅ Roblox verification successful.",
+    ACCEPTED: "✅ You have been accepted.",
+    DENIED: "❌ You have been denied.",
+    FAILED: "🚫 You failed filtering. You may appeal."
   },
 
   QUOTES: [
@@ -85,35 +93,46 @@ const client = new Client({
 const applyCooldown = new Map();
 const ticketCooldown = new Map();
 const spamTracker = new Map();
+const verificationMap = new Map();
+const usedRobloxAccounts = new Set();
 
 /* ================= HELPERS ================= */
 
-const embed = (title, desc) =>
-  new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(desc)
-    .setColor(0x0b0b0b)
-    .setTimestamp();
+const embed = (t, d) =>
+  new EmbedBuilder().setTitle(t).setDescription(d).setColor(0x0b0b0b).setTimestamp();
 
 const isStaff = m =>
   m.roles.cache.some(r => CONFIG.ROLES.STAFF.includes(r.id));
+
+/* ================= ROBLOX LOGIN ================= */
+
+(async () => {
+  if (process.env.ROBLOX_COOKIE) {
+    await noblox.setCookie(process.env.ROBLOX_COOKIE);
+    console.log("✅ Roblox authenticated");
+  }
+})();
 
 /* ================= COMMANDS ================= */
 
 const commands = [
   new SlashCommandBuilder().setName("apply").setDescription("Apply to Sentinel Alliance"),
-  new SlashCommandBuilder().setName("ticket").setDescription("Open a support ticket"),
+  new SlashCommandBuilder().setName("ticket").setDescription("Open a ticket"),
   new SlashCommandBuilder().setName("appeal").setDescription("Submit an appeal"),
   new SlashCommandBuilder().setName("quote").setDescription("Get a Sentinel quote"),
+  new SlashCommandBuilder().setName("verify").setDescription("Start Roblox verification"),
+
+  new SlashCommandBuilder()
+    .setName("verifycheck")
+    .setDescription("Check Roblox verification")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   new SlashCommandBuilder()
     .setName("accept")
     .setDescription("Accept applicant")
     .addUserOption(o => o.setName("user").setRequired(true))
     .addStringOption(o =>
-      o.setName("order")
-        .setDescription("sentinel / iron / rose / raven")
-        .setRequired(true)
+      o.setName("order").setDescription("sentinel / iron / rose / raven").setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -139,13 +158,9 @@ const commands = [
 client.once("ready", async () => {
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
   await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.CLIENT_ID,
-      process.env.GUILD_ID
-    ),
+    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
     { body: commands.map(c => c.toJSON()) }
   );
-
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
@@ -157,7 +172,7 @@ client.on("interactionCreate", async i => {
   if (i.isChatInputCommand() && i.commandName === "apply") {
     const last = applyCooldown.get(i.user.id);
     if (last && Date.now() - last < CONFIG.GENERAL.APPLY_COOLDOWN_HOURS * 3600000)
-      return i.reply({ content: "⏳ You are on cooldown.", ephemeral: true });
+      return i.reply({ content: "⏳ Application cooldown active.", ephemeral: true });
 
     applyCooldown.set(i.user.id, Date.now());
 
@@ -166,12 +181,12 @@ client.on("interactionCreate", async i => {
       .setTitle("Sentinel Alliance Application");
 
     modal.addComponents(
-      ["Roblox Username", "Roblox Profile Link", "Desired Order", "Why Join", "Stats? (YES / NO)"]
-        .map((label, idx) =>
+      ["Roblox Username", "Profile Link", "Desired Order", "Why Join", "Stats? (YES / NO)"]
+        .map((l, idx) =>
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId(`q${idx}`)
-              .setLabel(label)
+              .setLabel(l)
               .setStyle(idx === 3 ? TextInputStyle.Paragraph : TextInputStyle.Short)
               .setRequired(true)
           )
@@ -181,21 +196,54 @@ client.on("interactionCreate", async i => {
     return i.showModal(modal);
   }
 
-  /* ===== APPLY SUBMIT ===== */
   if (i.isModalSubmit() && i.customId === "apply_modal") {
     const ch = i.guild.channels.cache.get(CONFIG.CHANNELS.APPLICATIONS);
 
-    await ch.send(
-      embed(
-        "📄 New Application",
-        `Applicant: ${i.user.tag}\n\n` +
-        [0,1,2,3,4].map(x => i.fields.getTextInputValue(`q${x}`)).join("\n\n")
-      )
-    );
-
+    await ch.send(embed(
+      "📄 New Application",
+      `Applicant: ${i.user.tag}\n\n${[0,1,2,3,4].map(x=>i.fields.getTextInputValue(`q${x}`)).join("\n\n")}`
+    ));
     await ch.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     return i.reply({ content: CONFIG.MESSAGES.APPLY_SUCCESS, ephemeral: true });
+  }
+
+  /* ===== ROBLOX VERIFY ===== */
+  if (i.isChatInputCommand() && i.commandName === "verify") {
+    const phrase = `${CONFIG.ROBLOX.BIO_PREFIX}${Math.floor(Math.random()*99999)}`;
+    verificationMap.set(i.user.id, phrase);
+
+    return i.reply({
+      embeds: [embed("Roblox Verification", `Put this phrase in your Roblox bio:\n\`${phrase}\``)],
+      ephemeral: true
+    });
+  }
+
+  if (i.isChatInputCommand() && i.commandName === "verifycheck") {
+    if (!isStaff(i.member)) return i.reply({ content: "Staff only.", ephemeral: true });
+
+    const user = i.options.getUser("user");
+    const phrase = verificationMap.get(user.id);
+    if (!phrase) return i.reply("No verification pending.");
+
+    const robloxId = await noblox.getIdFromUsername(user.username).catch(() => null);
+    if (!robloxId) return i.reply("Roblox user not found.");
+
+    if (CONFIG.ROBLOX.ONE_ACCOUNT_ONLY && usedRobloxAccounts.has(robloxId))
+      return i.reply("Roblox account already used.");
+
+    const bio = await noblox.getBlurb(robloxId);
+    if (!bio.includes(phrase)) return i.reply("❌ Phrase not found.");
+
+    const member = await i.guild.members.fetch(user.id);
+    await member.roles.add(CONFIG.ROLES.VERIFIED);
+    await member.roles.remove(CONFIG.ROLES.FILTERING).catch(()=>{});
+    await member.setNickname(await noblox.getUsernameFromId(robloxId)).catch(()=>{});
+
+    usedRobloxAccounts.add(robloxId);
+    verificationMap.delete(user.id);
+
+    return i.reply(CONFIG.MESSAGES.VERIFIED);
   }
 
   /* ===== TICKET ===== */
@@ -211,12 +259,12 @@ client.on("interactionCreate", async i => {
       .setTitle("Open Ticket");
 
     modal.addComponents(
-      ["Type (Report / Appeal / Help)", "Who is this about?", "Explain the issue"]
-        .map((label, idx) =>
+      ["Type", "Who is involved?", "Explain the issue"]
+        .map((l, idx) =>
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId(`t${idx}`)
-              .setLabel(label)
+              .setLabel(l)
               .setStyle(idx === 2 ? TextInputStyle.Paragraph : TextInputStyle.Short)
               .setRequired(idx !== 1)
           )
@@ -226,7 +274,6 @@ client.on("interactionCreate", async i => {
     return i.showModal(modal);
   }
 
-  /* ===== TICKET SUBMIT ===== */
   if (i.isModalSubmit() && i.customId === "ticket_modal") {
     const channel = await i.guild.channels.create({
       name: `ticket-${i.user.username}`.toLowerCase(),
@@ -234,20 +281,14 @@ client.on("interactionCreate", async i => {
       permissionOverwrites: [
         { id: i.guild.id, deny: ["ViewChannel"] },
         { id: i.user.id, allow: ["ViewChannel", "SendMessages"] },
-        ...CONFIG.ROLES.STAFF.map(r => ({
-          id: r,
-          allow: ["ViewChannel", "SendMessages"]
-        }))
+        ...CONFIG.ROLES.STAFF.map(r => ({ id: r, allow: ["ViewChannel", "SendMessages"] }))
       ]
     });
 
-    await channel.send(
-      embed(
-        "🎫 Ticket",
-        `User: ${i.user.tag}\n\n` +
-        [0,1,2].map(x => i.fields.getTextInputValue(`t${x}`)).join("\n\n")
-      )
-    );
+    await channel.send(embed(
+      "🎫 Ticket",
+      `User: ${i.user.tag}\n\n${[0,1,2].map(x=>i.fields.getTextInputValue(`t${x}`)).join("\n\n")}`
+    ));
 
     return i.reply({ content: CONFIG.MESSAGES.TICKET_CREATED, ephemeral: true });
   }
@@ -279,14 +320,14 @@ client.on("interactionCreate", async i => {
 
   /* ===== QUOTE ===== */
   if (i.isChatInputCommand() && i.commandName === "quote") {
-    const q = CONFIG.QUOTES[Math.floor(Math.random() * CONFIG.QUOTES.length)];
-    return i.reply(embed("Sentinel Quote", q));
+    return i.reply(embed("Sentinel Quote",
+      CONFIG.QUOTES[Math.floor(Math.random()*CONFIG.QUOTES.length)]
+    ));
   }
 
   /* ===== STAFF ACTIONS ===== */
-  if (i.isChatInputCommand() && ["accept","deny","fail","demote"].includes(i.commandName)) {
-    if (!isStaff(i.member))
-      return i.reply({ content: "Staff only.", ephemeral: true });
+  if (["accept","deny","fail","demote"].includes(i.commandName)) {
+    if (!isStaff(i.member)) return i.reply({ content: "Staff only.", ephemeral: true });
 
     const user = i.options.getUser("user");
     const member = await i.guild.members.fetch(user.id);
@@ -294,22 +335,16 @@ client.on("interactionCreate", async i => {
     if (i.commandName === "accept") {
       const order = i.options.getString("order").toLowerCase();
       await member.roles.add(CONFIG.ROLES.MEMBER);
-      if (CONFIG.ROLES.ORDERS[order]) {
-        await member.roles.add(CONFIG.ROLES.ORDERS[order]);
-      }
+      if (CONFIG.ROLES.ORDERS[order]) await member.roles.add(CONFIG.ROLES.ORDERS[order]);
       await member.roles.remove(CONFIG.ROLES.FILTERING).catch(()=>{});
-      return i.reply(`✅ Accepted ${user.tag}`);
+      return i.reply(CONFIG.MESSAGES.ACCEPTED);
     }
 
-    if (i.commandName === "deny") {
-      return i.reply(`❌ Denied ${user.tag}`);
-    }
+    if (i.commandName === "deny") return i.reply(CONFIG.MESSAGES.DENIED);
 
     if (i.commandName === "fail") {
-      await i.guild.members.ban(user.id, {
-        reason: i.options.getString("reason")
-      });
-      return i.reply(`🚫 ${user.tag} banned`);
+      await i.guild.members.ban(user.id, { reason: i.options.getString("reason") });
+      return i.reply(CONFIG.MESSAGES.FAILED);
     }
 
     if (i.commandName === "demote") {
@@ -317,7 +352,7 @@ client.on("interactionCreate", async i => {
         await member.roles.remove(o).catch(()=>{});
       }
       await member.roles.add(CONFIG.ROLES.DEFAULT_COMPANY);
-      return i.reply("⬇️ User demoted");
+      return i.reply("⬇️ User demoted.");
     }
   }
 });
